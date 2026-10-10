@@ -2,7 +2,7 @@
 
 Local-first prototype for voice- and gesture-guided browsing.
 
-## Run locally
+## Local Installation Steps
 
 1. Install Node.js 22 or newer.
 2. Run `npm install`.
