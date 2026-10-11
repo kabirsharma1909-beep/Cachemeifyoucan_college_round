@@ -62,6 +62,21 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
     [FreeHandCursor]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
     [FreeHandCursor]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
   }
+  if ($parts[0] -eq 'dblclick') {
+    for ($i = 0; $i -lt 2; $i++) {
+      [FreeHandCursor]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+      [FreeHandCursor]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    }
+  }
+  if ($parts[0] -eq 'rclick') {
+    [FreeHandCursor]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+    [FreeHandCursor]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+  }
+  if ($parts[0] -eq 'wheel' -and $parts.Length -eq 2) {
+    $delta = [int]::Parse($parts[1], [System.Globalization.CultureInfo]::InvariantCulture)
+    $data = [BitConverter]::ToUInt32([BitConverter]::GetBytes($delta), 0)
+    [FreeHandCursor]::mouse_event(0x0800, 0, 0, $data, [UIntPtr]::Zero)
+  }
 }
 `;
 
@@ -723,6 +738,86 @@ async function executeAction(action: z.infer<typeof actionSchema>) {
 
   return `Action ${action.type} executed successfully.`;
 }
+
+
+// ---- Real PC cursor control (head tracking) -------------------------------------------------
+// These endpoints are deliberately separate from /api/actions and /api/commands, so voice commands
+// and the Gemini parser can never reach them. They only work while the UI has "armed" them, and the
+// arming expires after a few seconds unless the UI keeps sending its heartbeat.
+const OS_ARM_MS = 6000;
+let osArmedUntil = 0;
+
+const osArmSchema = z.object({ enabled: z.boolean() });
+const osMoveSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
+const osClickSchema = z.object({
+  x: z.number().min(0).max(1).optional(),
+  y: z.number().min(0).max(1).optional(),
+  button: z.enum(['left', 'right']).default('left'),
+  double: z.boolean().optional(),
+});
+const osScrollSchema = z.object({ delta: z.number().int().min(-1200).max(1200) });
+
+function osSend(line: string) {
+  getCursorBridge().stdin.write(`${line}\n`);
+}
+
+function osGuard(response: express.Response) {
+  if (Date.now() > osArmedUntil) {
+    response.status(409).json({ error: 'PC cursor control is not armed. Start Head control in the FreeHand page.' });
+    return false;
+  }
+  return true;
+}
+
+app.post('/api/os/arm', (request, response) => {
+  const parsed = osArmSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: 'Invalid request' });
+    return;
+  }
+  if (parsed.data.enabled) {
+    if (process.platform !== 'win32') {
+      response.status(400).json({ error: 'Head control of the PC cursor currently supports Windows only.' });
+      return;
+    }
+    try {
+      getCursorBridge(); // warm up PowerShell so the first move is instant
+    } catch (error) {
+      response.status(500).json({ error: error instanceof Error ? error.message : 'Could not start the cursor bridge.' });
+      return;
+    }
+    osArmedUntil = Date.now() + OS_ARM_MS;
+  } else {
+    osArmedUntil = 0;
+  }
+  response.json({ armed: parsed.data.enabled });
+});
+
+app.post('/api/os/move', (request, response) => {
+  const parsed = osMoveSchema.safeParse(request.body);
+  if (!parsed.success) { response.status(400).json({ error: 'Invalid move' }); return; }
+  if (!osGuard(response)) return;
+  osSend(`move,${parsed.data.x.toFixed(5)},${parsed.data.y.toFixed(5)}`);
+  response.json({ ok: true });
+});
+
+app.post('/api/os/click', (request, response) => {
+  const parsed = osClickSchema.safeParse(request.body);
+  if (!parsed.success) { response.status(400).json({ error: 'Invalid click' }); return; }
+  if (!osGuard(response)) return;
+  const { x, y, button, double } = parsed.data;
+  if (x !== undefined && y !== undefined) osSend(`move,${x.toFixed(5)},${y.toFixed(5)}`);
+  osSend(button === 'right' ? 'rclick' : double ? 'dblclick' : 'click');
+  response.json({ ok: true });
+});
+
+app.post('/api/os/scroll', (request, response) => {
+  const parsed = osScrollSchema.safeParse(request.body);
+  if (!parsed.success) { response.status(400).json({ error: 'Invalid scroll' }); return; }
+  if (!osGuard(response)) return;
+  osSend(`wheel,${parsed.data.delta}`);
+  response.json({ ok: true });
+});
 
 app.get('/api/health', (_request, response) => {
   response.json({ ok: true, service: 'freehand-local-api' });
