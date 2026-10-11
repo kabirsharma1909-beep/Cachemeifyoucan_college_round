@@ -2,7 +2,7 @@
 
 Control your computer with your **hand**, your **head** and your **voice**. Local-first: camera frames are processed in your browser and never uploaded.
 
-![FreeHand landing page](\src\Docs\Images\1.jpeg)
+![FreeHand landing page](src/Docs/Images/1.jpeg)
 
 ## Features
 
@@ -12,13 +12,11 @@ Control your computer with your **hand**, your **head** and your **voice**. Loca
 - **Custom signs**: record your own hand signs and map them to actions.
 - **Voice commands**: say or type what you want; common commands work out of the box.
 
-![What's inside]()
-
 ## How it works
 
 Point, hold still, done. Move with your hand or head, keep the cursor still while a ring fills and FreeHand clicks, or use a voice command or custom sign for things a click can't do.
 
-![How it works](\src\Docs\Images\2.jpeg)
+![How it works](src/Docs/Images/2.jpeg)
 
 ## Quick start
 
@@ -30,9 +28,11 @@ Point, hold still, done. Move with your hand or head, keep the cursor still whil
 
 Head control of the real cursor supports **Windows only**.
 
+![FreeHand setup instructions](src/Docs/Images/4.jpeg)
+
 ## The app
 
-![FreeHand app](\src\Docs\Images\5.jpeg)
+![FreeHand app](src/Docs/Images/5.jpeg)
 
 The client uses MediaPipe in the browser for hand and face landmarks. A local Node service validates actions and drives a dedicated Chrome window through Playwright.
 
@@ -48,7 +48,7 @@ The client uses MediaPipe in the browser for hand and face landmarks. A local No
 
 Hold still and it clicks. After about a third of the dwell time the cursor freezes in place, so tremor cannot move it and the click lands exactly where you see it. "Dwell steadiness" controls how much wobble still counts as holding still. Palm and two-finger scrolling are off by default, because an open hand is a natural pose and used to scroll constantly.
 
-![Settings](\src\Docs\Images\6.jpeg)
+![Settings](src/Docs/Images/6.jpeg)
 
 ### Custom signs
 
@@ -56,7 +56,7 @@ In the `my_signs.exe` panel: name a sign, choose an action (click, scroll, back/
 
 Signs and settings are saved in this browser (localStorage). Tips: use clearly different hand shapes, keep the same hand you recorded with, and record in the lighting you will use. Custom signs take priority over the built-in gestures.
 
-![My signs and head tuning](\src\Docs\Images\7.jpeg)
+![My signs and head tuning](src/Docs/Images/7.jpeg)
 
 ### Head control (moves your real PC cursor)
 
@@ -88,3 +88,5 @@ Pick **Head → PC cursor**, press **Start Head Control**, and look at the middl
 - Head control works only while it is switched on, and switches itself off within about 6 seconds if the page stops sending its heartbeat.
 - Things to know: the tracking models download once from public servers; voice input uses your browser's built-in speech recognition, which in Chrome may send audio to its provider; and if you add an optional Gemini key, typed or spoken commands that the built-in rules can't parse are sent to Gemini.
 - Raw audio and video are not captured or logged by default.
+
+![Privacy details](src/Docs/Images/3.jpeg)
