@@ -48,3 +48,5 @@ the lighting you will use. Custom signs take priority over the built-in gestures
 - The hand cursor is drawn inside the controlled Chrome page at the exact spot a click lands. To also move the real Windows cursor, add `FREEHAND_OS_CURSOR=1` to `.env`.
 - Tab actions are rate-limited on the server (one per 2s, max 10 tabs), so a misfiring sign cannot spam or mass-close tabs.
 - A custom sign must be clearly released (or the hand removed) before it can fire again. In `my_signs.exe`, the "Closest" line shows how near your hand is to each sign, so you can tune "Sign strictness".
+
+Credits: Cache Me If You Can
