@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
+import { FaceLandmarker, FilesetResolver, GestureRecognizer } from '@mediapipe/tasks-vision';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -46,6 +46,8 @@ interface BrowserSpeechRecognitionConstructor {
 
 const WSS_FILES_URL =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm';
+const FACE_MODEL_URL =
+  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 const HAND_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
 
@@ -105,6 +107,12 @@ interface Settings {
   smoothing: number; // 1 (snappy) .. 10 (very smooth)
   signThreshold: number; // lower = stricter matching
   signHoldMs: number;
+  dwellTolerance: number; // how far (in screen heights) the cursor may wander and still count as still
+  clickSound: boolean;
+  headSensX: number; // 1..10, higher = smaller head turn needed
+  headSensY: number;
+  headSmoothing: number; // 1 (snappy) .. 10 (very smooth)
+  tiltScroll: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -112,10 +120,16 @@ const DEFAULT_SETTINGS: Settings = {
   dwellEnabled: true,
   dwellMs: 900,
   fistClick: true,
-  scrollGestures: true,
+  scrollGestures: false, // off by default: an open hand is the natural pose, and it used to scroll constantly
   smoothing: 7,
   signThreshold: 0.22,
   signHoldMs: 450,
+  dwellTolerance: 0.04,
+  clickSound: true,
+  headSensX: 5,
+  headSensY: 5,
+  headSmoothing: 6,
+  tiltScroll: true,
 };
 
 const ACTION_OPTIONS: Array<{ kind: SignActionKind; label: string; needs?: 'key' | 'text' | 'command' }> = [
@@ -247,7 +261,17 @@ const POINTER_DEADZONE = 0.0025; // fraction of screen; ignores sub-pixel wobble
 const CLICK_LOOKBACK_MS = 350; // click where the hand was BEFORE the fist formed
 const CLICK_DWELL_MS = 300;
 const GESTURE_CONFIRM_FRAMES = 3;
-const DWELL_RADIUS = 0.018; // how still (fraction of screen) the cursor must stay to dwell-click
+const DWELL_LOCK_AT = 0.35; // after this share of the dwell, the cursor freezes so the click lands where you see it
+const SCREEN_ASPECT = 16 / 9; // so 'distance' on screen is measured in real pixels, not stretched units
+// Nose-tip offset (in eye-distances) that spans half the screen at sensitivity 5. The nose sticks out about a
+// third of the eye distance, so 0.11 is roughly +/-18 degrees of head turn and 0.07 roughly +/-11 degrees of tip.
+const HEAD_BASE_X = 0.11;
+const HEAD_BASE_Y = 0.07;
+const HEAD_CALIB_WARMUP_MS = 1000;
+const HEAD_CALIB_MS = 1000;
+const TILT_START_DEG = 15;
+const TILT_HOLD_MS = 250;
+const TILT_INTERVAL_MS = 90;
 const SIGN_CONFIRM_FRAMES = 4; // frames a pose must match before the sign activates
 const SIGN_EXIT_FRAMES = 6; // frames of mismatch before an active sign is dropped
 const SIGN_EXIT_FACTOR = 1.4; // an active sign tolerates a looser match than it needed to start
@@ -255,16 +279,24 @@ const SIGN_RELEASE_FACTOR = 1.8; // after firing, the pose must be at least this
 const SIGN_RELEASE_MS = 500; // ...for this long before the sign can fire again
 const DISCRETE_HOLD_MS = 700; // tab/key/text/command signs need a longer deliberate hold
 const DISCRETE_COOLDOWN_MS = 2000; // and a cooldown after any sign fires
+type Mode = 'hand' | 'head';
+type HeadStatus = 'off' | 'calibrating' | 'tracking' | 'no-face';
+type DwellState = 'off' | 'ready' | 'dwelling' | 'locked' | 'clicked' | 'paused' | 'scroll-pose' | 'no-input';
 const RECORD_COUNTDOWN = 3;
 const RECORD_MS = 1600;
 
 function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const landmarkerRef = useRef<GestureRecognizer | null>(null);
-  const animationRef = useRef<number | null>(null);
+  const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const stepRef = useRef<() => void>(() => undefined);
+  const audioRef = useRef<AudioContext | null>(null);
+  const heartbeatRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const autoListenRef = useRef(false);
+  const modeRef = useRef<Mode>('hand');
 
   const lastGestureRef = useRef<GestureName>('No hand');
   const gestureStartTimeRef = useRef<number>(0);
@@ -282,8 +314,16 @@ function App() {
   const handLostAtRef = useRef(0);
   const lastVideoTimeRef = useRef(-1);
 
-  // dwell click
-  const dwellRef = useRef<{ x: number; y: number; since: number; armed: boolean } | null>(null);
+  // dwell click (shared by hand and head modes)
+  const dwellRef = useRef<{ x: number; y: number; since: number; armed: boolean; locked: boolean; lx: number; ly: number } | null>(null);
+  const dwellStateRef = useRef<DwellState>('off');
+
+  // head tracking
+  const headCalibRef = useRef({ active: false, startAt: 0, n: 0, sumL: 0, sumV: 0, sumR: 0, sumLL: 0, sumVV: 0 });
+  const headNeutralRef = useRef<{ l: number; v: number; r: number } | null>(null);
+  const headFaceRef = useRef(false);
+  const calibLeftRef = useRef(0);
+  const tiltRef = useRef<{ since: number | null; lastScroll: number }>({ since: null, lastScroll: 0 });
 
   // custom signs
   const signCandRef = useRef<{ id: string | null; n: number }>({ id: null, n: 0 });
@@ -299,13 +339,17 @@ function App() {
   const timersRef = useRef<number[]>([]);
 
   const [cameraState, setCameraState] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle');
+  const [mode, setMode] = useState<Mode>('hand');
+  const [headStatus, setHeadStatus] = useState<HeadStatus>('off');
+  const [calibLeft, setCalibLeft] = useState(0);
+  const [dwellState, setDwellState] = useState<DwellState>('off');
   const [gesture, setGesture] = useState<GestureName>('No hand');
   const [command, setCommand] = useState('');
   const [lastAction, setLastAction] = useState('No browser action sent yet.');
   const [actionTimestamp, setActionTimestamp] = useState<string>('');
   const [listening, setListening] = useState(false);
 
-  const [settings, setSettings] = useState<Settings>(() => loadJson('freehand.settings', DEFAULT_SETTINGS));
+  const [settings, setSettings] = useState<Settings>(() => loadJson('freehand.settings.v2', DEFAULT_SETTINGS));
   const [signs, setSigns] = useState<Sign[]>(loadSigns);
   const [activeSignId, setActiveSignId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ name: string; kind: SignActionKind; param: string; repeat: boolean }>({
@@ -318,7 +362,7 @@ function App() {
   const [signMessage, setSignMessage] = useState('');
   const [signDebug, setSignDebug] = useState<{ name: string; d: number } | null>(null);
 
-  // The video loop reads these refs, so it always sees the latest values without restarting.
+  // The tracking loop reads these refs, so it always sees the latest values without restarting.
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const signsRef = useRef(signs);
@@ -326,10 +370,7 @@ function App() {
   const fireSignRef = useRef<(sign: Sign) => void>(() => undefined);
 
   useEffect(() => {
-    try { localStorage.setItem('freehand.settings', JSON.stringify(settings)); } catch { /* storage full or blocked */ }
-    const cutoff = 2.5 - (settings.smoothing - 1) * 0.2;
-    filterX.current.minCutoff = cutoff;
-    filterY.current.minCutoff = cutoff;
+    try { localStorage.setItem('freehand.settings.v2', JSON.stringify(settings)); } catch { /* storage full or blocked */ }
   }, [settings]);
 
   useEffect(() => {
@@ -339,19 +380,7 @@ function App() {
   const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setSettings((prev) => ({ ...prev, [key]: value }));
 
-  const stopCamera = useCallback(() => {
-    if (animationRef.current) cancelAnimationFrame(animationRef.current);
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    landmarkerRef.current?.close();
-    landmarkerRef.current = null;
-    setCameraState('idle');
-    setGesture('No hand');
-    setActiveSignId(null);
-    activeSignRef.current = null;
-    if (cursorElRef.current) cursorElRef.current.style.opacity = '0';
-  }, []);
-
+  // ---------- backend helpers ----------
   const sendAction = useCallback(async (action: BrowserAction, reportResult = true) => {
     try {
       const response = await fetch('/api/actions', {
@@ -366,6 +395,26 @@ function App() {
       }
     } catch {
       setLastAction('Could not reach the local browser service.');
+    }
+  }, []);
+
+  // Real PC cursor control (head mode). Returns false if the service refused or was unreachable.
+  const osCall = useCallback(async (path: 'arm' | 'move' | 'click' | 'scroll', body: unknown): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/os/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const result = (await response.json().catch(() => ({}))) as { error?: string };
+        setLastAction(result.error ?? 'PC cursor control was refused by the local service.');
+        return false;
+      }
+      return true;
+    } catch {
+      setLastAction('Could not reach the local service. Is `npm run dev` still running?');
+      return false;
     }
   }, []);
 
@@ -408,22 +457,109 @@ function App() {
     }
   };
 
-  const detectHands = useCallback(() => {
+  // ---------- shared pointer + click + dwell engine ----------
+  const playClick = () => {
+    const ctx = audioRef.current;
+    if (!ctx || !settingsRef.current.clickSound) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t = ctx.currentTime;
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.08);
+    } catch { /* audio is a nicety; never break tracking over it */ }
+  };
+
+  const doClick = (at: { x: number; y: number }) => {
+    const el = cursorElRef.current;
+    el?.classList.add('click');
+    window.setTimeout(() => el?.classList.remove('click'), 250);
+    playClick();
+    lastActionTimeRef.current = performance.now();
+    lastSentRef.current = at;
+    if (modeRef.current === 'head') void osCall('click', { x: at.x, y: at.y });
+    else void sendAction({ type: 'click', x: at.x, y: at.y });
+  };
+
+  // Sends the cursor to `target`, at most ~30x/s, never more than one request in flight.
+  const sendPointer = (now: number, target: { x: number; y: number }) => {
+    if (now - lastPointerTimeRef.current < POINTER_INTERVAL_MS || pointerBusyRef.current) return;
+    const last = lastSentRef.current;
+    if (last && Math.hypot(target.x - last.x, target.y - last.y) <= POINTER_DEADZONE) return;
+    lastPointerTimeRef.current = now;
+    lastSentRef.current = target;
+    pointerBusyRef.current = true;
+    const request = modeRef.current === 'head'
+      ? osCall('move', { x: target.x, y: target.y })
+      : sendAction({ type: 'pointer-move', x: target.x, y: target.y }, false);
+    void request.finally(() => { pointerBusyRef.current = false; });
+  };
+
+  // Dwell: hold still and it clicks. Once ~a third of the dwell has passed the cursor FREEZES at a fixed
+  // spot, so small tremor never moves it and the click lands exactly where you saw it.
+  const runDwell = (now: number, target: { x: number; y: number }, eligible: boolean, cfg: Settings) => {
+    const none = { progress: 0, holdAt: null as { x: number; y: number } | null, clickAt: null as { x: number; y: number } | null, state: 'paused' as DwellState };
+    if (!eligible) {
+      dwellRef.current = null;
+      return none;
+    }
+    let a = dwellRef.current;
+    const moved = a ? Math.hypot((target.x - a.x) * SCREEN_ASPECT, target.y - a.y) > cfg.dwellTolerance : false;
+    if (!a || moved) {
+      a = { x: target.x, y: target.y, since: now, armed: true, locked: false, lx: 0, ly: 0 };
+      dwellRef.current = a;
+    }
+    if (!a.armed) return { ...none, holdAt: { x: a.lx, y: a.ly }, state: 'clicked' as DwellState };
+    const progress = Math.min(1, (now - a.since) / cfg.dwellMs);
+    if (!a.locked && progress >= DWELL_LOCK_AT) {
+      const at = lastSentRef.current ?? target;
+      a.locked = true;
+      a.lx = at.x;
+      a.ly = at.y;
+    }
+    if (progress >= 1) {
+      a.armed = false;
+      return { progress: 0, holdAt: { x: a.lx, y: a.ly }, clickAt: { x: a.lx, y: a.ly }, state: 'clicked' as DwellState };
+    }
+    return { progress, holdAt: a.locked ? { x: a.lx, y: a.ly } : null, clickAt: null, state: (a.locked ? 'locked' : 'dwelling') as DwellState };
+  };
+
+  const showDwell = (el: HTMLDivElement | null, progress: number, state: DwellState) => {
+    el?.style.setProperty('--p', `${progress * 360}deg`);
+    el?.style.setProperty('--ring', progress > 0.04 ? '1' : '0');
+    if (dwellStateRef.current !== state) {
+      dwellStateRef.current = state;
+      setDwellState(state);
+    }
+  };
+
+  const resetTracking = () => {
+    filterX.current.reset();
+    filterY.current.reset();
+    historyRef.current = [];
+    dwellRef.current = null;
+  };
+
+  // ---------- HAND step ----------
+  const handStep = () => {
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
-    if (!video || !landmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      animationRef.current = requestAnimationFrame(detectHands);
-      return;
-    }
-    // The camera runs slower than the screen refresh; processing the same frame twice only adds noise.
-    if (video.currentTime === lastVideoTimeRef.current) {
-      animationRef.current = requestAnimationFrame(detectHands);
-      return;
-    }
+    if (!video || !landmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    // The camera runs slower than the loop; processing the same frame twice only adds noise.
+    if (video.currentTime === lastVideoTimeRef.current) return;
     lastVideoTimeRef.current = video.currentTime;
 
     const cfg = settingsRef.current;
     const now = performance.now();
+    const cutoff = 2.5 - (cfg.smoothing - 1) * 0.2;
+    filterX.current.minCutoff = cutoff;
+    filterY.current.minCutoff = cutoff;
+
     const results = landmarker.recognizeForVideo(video, now);
     const landmarks = results.landmarks[0];
     const recording = recordRef.current.phase !== 'idle';
@@ -456,8 +592,6 @@ function App() {
       setActiveSignId(null);
     };
 
-    // A sign that just fired must be clearly left (or the hand removed) before it can fire again.
-    // Borderline poses that flicker in and out of a match therefore can never re-trigger it.
     for (const sign of allSigns) {
       const st = signStateRef.current.get(sign.id);
       if (!st || !st.needsRelease) continue;
@@ -520,7 +654,6 @@ function App() {
     }
     const activeSign = active;
 
-    // Live readout of the closest sign so you can see why something matched (or didn't).
     if (now - signDebugAtRef.current > 250) {
       signDebugAtRef.current = now;
       const nearest = dists.length ? dists.reduce((x, y) => (x.d <= y.d ? x : y)) : null;
@@ -528,21 +661,16 @@ function App() {
       setSignDebug((prev) => (prev?.name === next?.name && prev?.d === next?.d ? prev : next));
     }
 
-    // ---- cursor ----
+    // ---- cursor + dwell ----
     const cursorEl = cursorElRef.current;
     const fistFreezes = currentGesture === 'Closed fist' && cfg.fistClick;
     const frozen = fistFreezes || Boolean(activeSign) || recording;
 
     if (landmarks) {
-      if (now - handLostAtRef.current > 400) {
-        filterX.current.reset();
-        filterY.current.reset();
-        historyRef.current = [];
-        dwellRef.current = null;
-      }
+      if (now - handLostAtRef.current > 400) resetTracking();
       handLostAtRef.current = now;
 
-      // Knuckles barely move when you close your hand, unlike the fingertip.
+      // Knuckles (index + middle MCP) barely move when you close your hand, unlike the fingertip.
       const rawX = 1 - (landmarks[5].x + landmarks[9].x) / 2; // mirrored preview
       const rawY = (landmarks[5].y + landmarks[9].y) / 2;
       const fx = filterX.current.filter(rawX, now);
@@ -559,49 +687,19 @@ function App() {
       }
 
       const target = toScreen(fx, fy);
-      if (!frozen && now - lastPointerTimeRef.current >= POINTER_INTERVAL_MS && !pointerBusyRef.current) {
-        const last = lastSentRef.current;
-        if (!last || Math.hypot(target.x - last.x, target.y - last.y) > POINTER_DEADZONE) {
-          lastPointerTimeRef.current = now;
-          lastSentRef.current = target;
-          pointerBusyRef.current = true;
-          void sendAction({ type: 'pointer-move', x: target.x, y: target.y }, false).finally(() => {
-            pointerBusyRef.current = false;
-          });
-        }
-      }
-
-      // ---- dwell click: hold the cursor still to click ----
       const isScrollPose = currentGesture === 'Open palm' || currentGesture === 'Two-finger point';
-      const dwellEligible = cfg.dwellEnabled && !frozen && !(isScrollPose && cfg.scrollGestures);
-      let progress = 0;
-      if (dwellEligible) {
-        let anchor = dwellRef.current;
-        if (!anchor || Math.hypot(target.x - anchor.x, target.y - anchor.y) > DWELL_RADIUS) {
-          anchor = { x: target.x, y: target.y, since: now, armed: true };
-          dwellRef.current = anchor;
-        }
-        if (anchor.armed) {
-          progress = Math.min(1, (now - anchor.since) / cfg.dwellMs);
-          if (progress >= 1) {
-            anchor.armed = false;
-            progress = 0;
-            lastActionTimeRef.current = now;
-            // Click where the cursor visibly is, not where the dwell started.
-            const at = lastSentRef.current ?? { x: anchor.x, y: anchor.y };
-            cursorEl?.classList.add('click');
-            window.setTimeout(() => cursorEl?.classList.remove('click'), 250);
-            void sendAction({ type: 'click', x: at.x, y: at.y });
-          }
-        }
-      } else {
-        dwellRef.current = null;
-      }
-      cursorEl?.style.setProperty('--p', `${progress * 360}deg`);
-      cursorEl?.style.setProperty('--ring', progress > 0.04 ? '1' : '0');
+      const scrollBlocks = isScrollPose && cfg.scrollGestures;
+      const eligible = cfg.dwellEnabled && !frozen && !scrollBlocks;
+      const dw = runDwell(now, target, eligible, cfg);
+      if (dw.clickAt) doClick(dw.clickAt);
+      if (!frozen && !dw.holdAt) sendPointer(now, target);
+
+      const label: DwellState = !cfg.dwellEnabled ? 'off' : frozen ? 'paused' : scrollBlocks ? 'scroll-pose' : dw.progress === 0 && dw.state === 'dwelling' ? 'ready' : dw.state;
+      showDwell(cursorEl, dw.progress, label);
     } else if (cursorEl) {
       cursorEl.style.opacity = '0';
       dwellRef.current = null;
+      showDwell(cursorEl, 0, cfg.dwellEnabled ? 'no-input' : 'off');
     }
 
     // ---- built-in gesture actions ----
@@ -631,11 +729,7 @@ function App() {
         const target = lockedPosRef.current;
         if (cfg.fistClick && clickReadyRef.current && dwellTime >= CLICK_DWELL_MS && timeSinceLastAction >= 450 && target) {
           clickReadyRef.current = false;
-          lastActionTimeRef.current = now;
-          lastSentRef.current = target;
-          cursorEl?.classList.add('click');
-          window.setTimeout(() => cursorEl?.classList.remove('click'), 250);
-          void sendAction({ type: 'click', x: target.x, y: target.y });
+          doClick(target);
         }
       } else if (cfg.scrollGestures && dwellTime >= 300 && timeSinceLastAction >= 650) {
         if (currentGesture === 'Open palm') {
@@ -647,36 +741,295 @@ function App() {
         }
       }
     }
+  };
 
-    animationRef.current = requestAnimationFrame(detectHands);
-  }, [sendAction]);
+  // ---------- HEAD step ----------
+  const resetCalibration = (now: number) => {
+    headCalibRef.current = { active: true, startAt: now, n: 0, sumL: 0, sumV: 0, sumR: 0, sumLL: 0, sumVV: 0 };
+  };
 
-  const startCamera = useCallback(async () => {
+  const recenter = useCallback(() => {
+    if (modeRef.current !== 'head' || !streamRef.current) return;
+    resetCalibration(performance.now());
+    resetTracking();
+    setHeadStatus('calibrating');
+  }, []);
+
+  const headStep = () => {
+    const video = videoRef.current;
+    const faceLandmarker = faceLandmarkerRef.current;
+    if (!video || !faceLandmarker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (video.currentTime === lastVideoTimeRef.current) return;
+    lastVideoTimeRef.current = video.currentTime;
+
+    const cfg = settingsRef.current;
+    const now = performance.now();
+    const cutoff = 2.2 - (cfg.headSmoothing - 1) * 0.19;
+    filterX.current.minCutoff = cutoff;
+    filterY.current.minCutoff = cutoff;
+
+    const result = faceLandmarker.detectForVideo(video, now);
+    const lm = result.faceLandmarks[0];
+    const cursorEl = cursorElRef.current;
+
+    if (!lm) {
+      if (headFaceRef.current) {
+        headFaceRef.current = false;
+        setHeadStatus('no-face');
+      }
+      if (cursorEl) cursorEl.style.opacity = '0';
+      dwellRef.current = null;
+      if (headCalibRef.current.active) resetCalibration(now); // calibration only counts while the face is visible
+      showDwell(cursorEl, 0, cfg.dwellEnabled ? 'no-input' : 'off');
+      return;
+    }
+    if (now - handLostAtRef.current > 400) resetTracking();
+    handLostAtRef.current = now;
+    if (!headFaceRef.current) {
+      headFaceRef.current = true;
+      setHeadStatus(headNeutralRef.current && !headCalibRef.current.active ? 'tracking' : 'calibrating');
+    }
+
+    // Head pose proxy from the eye line and nose tip, measured in PIXELS so angles are not stretched
+    // by the 4:3 frame. Both values are in eye-distances, so they ignore how far you sit from the camera,
+    // and they are measured in the eye line's own frame, so tilting your head does not leak into them.
+    const W = video.videoWidth || 640;
+    const H = video.videoHeight || 480;
+    const L = lm[33]; // your right eye (appears on the left of the raw image)
+    const R = lm[263];
+    const nose = lm[1];
+    const ex = (R.x - L.x) * W;
+    const ey = (R.y - L.y) * H;
+    const iod = Math.hypot(ex, ey) || 1;
+    const ux = ex / iod;
+    const uy = ey / iod;
+    const nx = (nose.x - (L.x + R.x) / 2) * W;
+    const ny = (nose.y - (L.y + R.y) / 2) * H;
+    const lateral = (nx * ux + ny * uy) / iod; // + = nose toward the right of the raw image
+    const vertical = (-nx * uy + ny * ux) / iod; // + = nose lower relative to the eyes
+    const roll = (Math.atan2(ey, ex) * 180) / Math.PI;
+
+    if (cursorEl) {
+      cursorEl.style.opacity = '1';
+      cursorEl.style.left = `${(1 - nose.x) * 100}%`; // mirrored preview marker on your nose
+      cursorEl.style.top = `${nose.y * 100}%`;
+    }
+
+    // ---- calibration: look at the middle of the screen and hold still ----
+    const cal = headCalibRef.current;
+    if (cal.active) {
+      const t = now - cal.startAt;
+      if (t >= HEAD_CALIB_WARMUP_MS) {
+        cal.n += 1;
+        cal.sumL += lateral;
+        cal.sumV += vertical;
+        cal.sumR += roll;
+        cal.sumLL += lateral * lateral;
+        cal.sumVV += vertical * vertical;
+      }
+      const left = Math.max(1, Math.ceil((HEAD_CALIB_WARMUP_MS + HEAD_CALIB_MS - t) / 1000));
+      if (calibLeftRef.current !== left) {
+        calibLeftRef.current = left;
+        setCalibLeft(left);
+      }
+      if (t >= HEAD_CALIB_WARMUP_MS + HEAD_CALIB_MS && cal.n >= 8) {
+        const meanL = cal.sumL / cal.n;
+        const meanV = cal.sumV / cal.n;
+        const sdL = Math.sqrt(Math.max(0, cal.sumLL / cal.n - meanL * meanL));
+        const sdV = Math.sqrt(Math.max(0, cal.sumVV / cal.n - meanV * meanV));
+        if (sdL > 0.025 || sdV > 0.025) {
+          resetCalibration(now); // you were moving: try again
+        } else {
+          headNeutralRef.current = { l: meanL, v: meanV, r: cal.sumR / cal.n };
+          cal.active = false;
+          resetTracking();
+          setHeadStatus('tracking');
+        }
+      }
+      showDwell(cursorEl, 0, 'paused');
+      return;
+    }
+
+    const neutral = headNeutralRef.current;
+    if (!neutral) return;
+
+    // ---- tilt your head to scroll (does not move the cursor) ----
+    const tilt = -(roll - neutral.r); // + = ear toward your right shoulder
+    const tiltAbs = Math.abs(tilt);
+    const tilting = cfg.tiltScroll && tiltAbs > TILT_START_DEG * 0.8;
+    if (cfg.tiltScroll && tiltAbs >= TILT_START_DEG) {
+      const ts = tiltRef.current;
+      ts.since ??= now;
+      if (now - ts.since >= TILT_HOLD_MS && now - ts.lastScroll >= TILT_INTERVAL_MS) {
+        ts.lastScroll = now;
+        const amount = Math.min(300, 60 + (tiltAbs - TILT_START_DEG) * 10);
+        void osCall('scroll', { delta: tilt > 0 ? -Math.round(amount) : Math.round(amount) });
+      }
+    } else {
+      tiltRef.current.since = null;
+    }
+
+    // ---- map head pose to the whole screen, then smooth ----
+    const gx = 1.25 ** (cfg.headSensX - 5);
+    const gy = 1.25 ** (cfg.headSensY - 5);
+    const rawX = 0.5 + 0.5 * ((neutral.l - lateral) / (HEAD_BASE_X / gx)); // turning right moves right
+    const rawY = 0.5 + 0.5 * ((vertical - neutral.v) / (HEAD_BASE_Y / gy)); // looking up moves up
+    const target = {
+      x: filterX.current.filter(clamp01(rawX), now),
+      y: filterY.current.filter(clamp01(rawY), now),
+    };
+
+    const dw = runDwell(now, target, cfg.dwellEnabled && !tilting, cfg);
+    if (dw.clickAt) doClick(dw.clickAt);
+    if (!tilting && !dw.holdAt) sendPointer(now, target);
+
+    const label: DwellState = !cfg.dwellEnabled ? 'off' : tilting ? 'paused' : dw.progress === 0 && dw.state === 'dwelling' ? 'ready' : dw.state;
+    showDwell(cursorEl, dw.progress, label);
+  };
+
+  stepRef.current = () => {
+    try {
+      if (modeRef.current === 'head') headStep();
+      else handStep();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  // The loop is driven by a Web Worker timer, not requestAnimationFrame. Browsers pause rAF (and slow
+  // timers) for tabs that are hidden or covered by another window, which would freeze tracking as soon
+  // as the controlled Chrome window or any other app covers this page. Worker timers keep running.
+  const startLoop = () => {
+    stopLoop();
+    const blob = new Blob(
+      ['let t;onmessage=()=>{clearTimeout(t);t=setTimeout(()=>postMessage(0),8)};postMessage(0)'],
+      { type: 'text/javascript' },
+    );
+    const url = URL.createObjectURL(blob);
+    const worker = new Worker(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+    worker.onmessage = () => {
+      stepRef.current();
+      worker.postMessage(0); // ask for the next tick only after this one finished: no backlog, no lag
+    };
+    workerRef.current = worker;
+  };
+
+  function stopLoop() {
+    workerRef.current?.terminate();
+    workerRef.current = null;
+  }
+
+  const stopCamera = useCallback(() => {
+    stopLoop();
+    if (heartbeatRef.current) window.clearInterval(heartbeatRef.current);
+    heartbeatRef.current = null;
+    if (modeRef.current === 'head') void osCall('arm', { enabled: false });
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    landmarkerRef.current?.close();
+    landmarkerRef.current = null;
+    faceLandmarkerRef.current?.close();
+    faceLandmarkerRef.current = null;
+    void audioRef.current?.close();
+    audioRef.current = null;
+    setCameraState('idle');
+    setGesture('No hand');
+    setHeadStatus('off');
+    setDwellState('off');
+    dwellStateRef.current = 'off';
+    setActiveSignId(null);
+    activeSignRef.current = null;
+    headFaceRef.current = false;
+    headNeutralRef.current = null;
+    headCalibRef.current.active = false;
+    if (cursorElRef.current) cursorElRef.current.style.opacity = '0';
+  }, [osCall]);
+
+  const startCamera = useCallback(async (requested: Mode) => {
     try {
       setCameraState('starting');
+      setLastAction(requested === 'head' ? 'Loading the head-tracking model…' : 'Loading the hand-tracking model…');
       const [vision, stream] = await Promise.all([
         FilesetResolver.forVisionTasks(WSS_FILES_URL),
         navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 }, audio: false }),
       ]);
-      const landmarker = await GestureRecognizer.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: HAND_MODEL_URL },
-        runningMode: 'VIDEO',
-        numHands: 1,
-      });
-
       streamRef.current = stream;
-      landmarkerRef.current = landmarker;
+
+      if (requested === 'head') {
+        faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: FACE_MODEL_URL },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+        });
+        // Arm real-cursor control on the local service; it expires unless we keep the heartbeat going.
+        const armed = await osCall('arm', { enabled: true });
+        if (!armed) {
+          stopCamera();
+          setCameraState('error');
+          return;
+        }
+        heartbeatRef.current = window.setInterval(() => { void osCall('arm', { enabled: true }); }, 2000);
+        headNeutralRef.current = null;
+        headFaceRef.current = false;
+        resetCalibration(performance.now());
+        setHeadStatus('calibrating');
+      } else {
+        landmarkerRef.current = await GestureRecognizer.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: HAND_MODEL_URL },
+          runningMode: 'VIDEO',
+          numHands: 1,
+        });
+      }
+
+      modeRef.current = requested;
+      setMode(requested);
+      resetTracking();
+      lastSentRef.current = null;
+      audioRef.current = new AudioContext(); // started from a click, so the browser allows it
+      void audioRef.current.resume();
+
       if (!videoRef.current) return;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
       lastVideoTimeRef.current = -1;
       setCameraState('ready');
-      animationRef.current = requestAnimationFrame(detectHands);
+      setLastAction(requested === 'head'
+        ? 'Head control is on. Look at the middle of your screen and hold still while it calibrates.'
+        : 'Hand control is on.');
+      startLoop();
     } catch (error) {
       console.error(error);
+      stopCamera();
       setCameraState('error');
+      setLastAction('Could not start the camera or the tracking model. Check camera permission and your internet connection.');
     }
-  }, [detectHands]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [osCall, stopCamera]);
+
+  const switchMode = useCallback(async (next: Mode) => {
+    if (next === modeRef.current && streamRef.current) return;
+    if (streamRef.current) {
+      stopCamera();
+      modeRef.current = next;
+      setMode(next);
+      await startCamera(next);
+    } else {
+      modeRef.current = next;
+      setMode(next);
+    }
+  }, [startCamera, stopCamera]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (modeRef.current !== 'head' || !streamRef.current) return;
+      const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
+      if (event.key === 'Escape') stopCamera();
+      else if ((event.key === 'r' || event.key === 'R') && !typing) recenter();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [recenter, stopCamera]);
 
   useEffect(() => () => {
     autoListenRef.current = false;
@@ -685,7 +1038,7 @@ function App() {
     stopCamera();
   }, [stopCamera]);
 
-  // ---- sign recording ----
+  // ---------- sign recording ----------
   const needsParam = ACTION_OPTIONS.find((option) => option.kind === draft.kind)?.needs;
   const canRepeat = draft.kind === 'scroll-down' || draft.kind === 'scroll-up' || draft.kind === 'key';
 
@@ -721,8 +1074,8 @@ function App() {
   }
 
   function startRecording() {
-    if (cameraState !== 'ready') {
-      setSignMessage('Turn the camera on first.');
+    if (cameraState !== 'ready' || modeRef.current !== 'hand') {
+      setSignMessage('Switch to Hand mode and turn the camera on first. Signs are recorded from your hand.');
       return;
     }
     if (needsParam && !draft.param.trim()) {
@@ -819,6 +1172,8 @@ function App() {
     recognition.start();
   }
 
+  // ---------- render ----------
+  const running = cameraState === 'ready';
   const activeSign = signs.find((sign) => sign.id === activeSignId) ?? null;
   const gestureLabel = (g: GestureName) => {
     switch (g) {
@@ -828,6 +1183,22 @@ function App() {
       case 'Thumbs up': return 'Thumbs up';
       default: return 'Pointing / idle';
     }
+  };
+  const dwellText: Record<DwellState, string> = {
+    off: 'Dwell click is off.',
+    ready: 'Dwell ready: hold still to click.',
+    dwelling: 'Hold still…',
+    locked: 'Locked, clicking…',
+    clicked: 'Clicked. Move away to click again.',
+    paused: 'Dwell paused (fist, sign, tilt or recording).',
+    'scroll-pose': 'Dwell paused: open palm / two fingers scroll. Point with one finger, or turn palm scrolling off.',
+    'no-input': mode === 'head' ? 'No face in view.' : 'No hand in view.',
+  };
+  const headStatusText: Record<HeadStatus, string> = {
+    off: 'OFF',
+    calibrating: 'CALIBRATING',
+    tracking: 'TRACKING',
+    'no-face': 'NO FACE',
   };
   const statusLabel = cameraState === 'ready' ? 'CAMERA ON' : cameraState.toUpperCase();
   const actionLabel = (sign: Sign) => {
@@ -841,25 +1212,30 @@ function App() {
         <div className="sticker"><span className="pixel-heart" /> LOCAL-FIRST</div>
         <h1>FREEHAND</h1>
         <p className="subtitle">
-          Browse with your hand and your voice. Everything runs on your machine.
+          Browse with your hand, your head and your voice. Everything runs on your machine.
         </p>
       </header>
 
       <section className="grid">
         <article className="win teal">
           <div className="titlebar">
-            <span>hand_control.exe</span>
+            <span>{mode === 'head' ? 'head_control.exe' : 'hand_control.exe'}</span>
             <span className="winbtns"><i>_</i><i>□</i><i>×</i></span>
           </div>
           <div className="win-body">
+            <div className="seg" role="group" aria-label="Control source">
+              <button className={mode === 'hand' ? 'on' : ''} onClick={() => void switchMode('hand')} disabled={cameraState === 'starting'}>Hand</button>
+              <button className={mode === 'head' ? 'on' : ''} onClick={() => void switchMode('head')} disabled={cameraState === 'starting'}>Head → PC cursor</button>
+            </div>
+
             <div className="row between">
               <span className={`status ${cameraState}`}>● {statusLabel}</span>
-              <span className={`gesture ${activeSign || gesture !== 'No hand' ? 'active' : ''}`}>
-                {activeSign ? `Sign · ${activeSign.name}` : gestureLabel(gesture)}
+              <span className={`gesture ${mode === 'head' ? (headStatus === 'tracking' ? 'active' : '') : activeSign || gesture !== 'No hand' ? 'active' : ''}`}>
+                {mode === 'head' ? `Head · ${headStatusText[headStatus]}` : activeSign ? `Sign · ${activeSign.name}` : gestureLabel(gesture)}
               </span>
             </div>
 
-            <div className="video-wrap">
+            <div className={`video-wrap ${mode === 'head' ? 'head' : ''}`}>
               <video ref={videoRef} muted playsInline />
               <div className="region-box" title="Keep your hand inside this box" />
               <div className="cursor-dot" ref={cursorElRef}>
@@ -876,17 +1252,46 @@ function App() {
                   <small>{rec.phase === 'countdown' ? 'get your pose ready' : 'keep it steady'}</small>
                 </div>
               )}
+              {mode === 'head' && headStatus === 'calibrating' && running && (
+                <div className="rec-overlay">
+                  <span className="rec-dot" />
+                  <b>{calibLeft}</b>
+                  <small>look at the middle of your screen<br />and hold still</small>
+                </div>
+              )}
             </div>
 
-            <ul className="howto">
-              <li><b>Move</b> your hand inside the dashed box.</li>
-              <li><b>Click</b> by holding still {settings.dwellEnabled ? `for ${(settings.dwellMs / 1000).toFixed(1)}s (watch the ring fill)` : '(dwell is off)'}{settings.fistClick ? ', or hold a fist 0.3s' : ''}.</li>
-              <li><b>Scroll</b> {settings.scrollGestures ? 'with open palm (down) or two fingers (up). Point with one finger to move without scrolling.' : 'with your own signs or voice (gesture scroll is off).'}</li>
-            </ul>
+            <div className="dwell-state">{dwellText[dwellState]}</div>
 
-            <button onClick={cameraState === 'ready' ? stopCamera : startCamera} disabled={cameraState === 'starting'}>
-              {cameraState === 'ready' ? 'Stop Camera' : cameraState === 'starting' ? 'Starting…' : 'Enable Camera Control'}
-            </button>
+            {mode === 'head' ? (
+              <>
+                <div className="warn">
+                  HEAD MODE moves your real Windows cursor and clicks anywhere on screen. Stop with the button or Esc
+                  (while this tab is focused).
+                </div>
+                <ul className="howto">
+                  <li><b>Move</b> by turning and tipping your head, as if looking around the screen.</li>
+                  <li><b>Click</b> by holding still {settings.dwellEnabled ? `for ${(settings.dwellMs / 1000).toFixed(1)}s. You will hear a tick.` : '(dwell is off, so turn it on in settings).'}</li>
+                  <li><b>Scroll</b> {settings.tiltScroll ? 'by tilting your head to a shoulder: right = down, left = up.' : '(tilt scroll is off).'}</li>
+                  <li><b>Drifted?</b> Press <b>Recenter</b> (or R) and look at the screen middle.</li>
+                </ul>
+              </>
+            ) : (
+              <ul className="howto">
+                <li><b>Move</b> your hand inside the dashed box.</li>
+                <li><b>Click</b> by holding still {settings.dwellEnabled ? `for ${(settings.dwellMs / 1000).toFixed(1)}s (watch the ring fill)` : '(dwell is off)'}{settings.fistClick ? ', or hold a fist 0.3s' : ''}.</li>
+                <li><b>Scroll</b> {settings.scrollGestures ? 'with open palm (down) or two fingers (up). Point with one finger to move without scrolling.' : 'with your own signs or voice (palm scrolling is off).'}</li>
+              </ul>
+            )}
+
+            <div className="btn-row">
+              <button onClick={running ? stopCamera : () => void startCamera(mode)} disabled={cameraState === 'starting'}>
+                {running ? 'Stop' : cameraState === 'starting' ? 'Starting…' : mode === 'head' ? 'Start Head Control' : 'Enable Camera Control'}
+              </button>
+              {mode === 'head' && (
+                <button className="secondary" onClick={recenter} disabled={!running}>Recenter (R)</button>
+              )}
+            </div>
           </div>
         </article>
 
@@ -941,8 +1346,8 @@ function App() {
           </div>
           <div className="win-body">
             <p className="blurb">
-              Teach FreeHand your own hand signs. Hold a pose, and it runs the action you pick. Custom signs take
-              priority over the built-in gestures.
+              Teach FreeHand your own hand signs (Hand mode). Hold a pose, and it runs the action you pick. Custom
+              signs take priority over the built-in gestures.
             </p>
 
             {signs.length === 0 ? (
@@ -1003,50 +1408,89 @@ function App() {
           </div>
         </article>
 
-        <article className="win green">
-          <div className="titlebar">
-            <span>settings.cfg</span>
-            <span className="winbtns"><i>_</i><i>□</i><i>×</i></span>
-          </div>
-          <div className="win-body">
-            <label className="check">
-              <input type="checkbox" checked={settings.signsEnabled} onChange={(e) => updateSetting('signsEnabled', e.target.checked)} />
-              Custom signs on
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={settings.dwellEnabled} onChange={(e) => updateSetting('dwellEnabled', e.target.checked)} />
-              Dwell click (hold still to click)
-            </label>
-            <label className="slider" htmlFor="dwell-ms">
-              <span>Dwell time <b>{(settings.dwellMs / 1000).toFixed(1)}s</b></span>
-              <input id="dwell-ms" type="range" min={400} max={2000} step={100} value={settings.dwellMs} onChange={(e) => updateSetting('dwellMs', Number(e.target.value))} />
-            </label>
+        <div className="stack">
+          <article className="win purple">
+            <div className="titlebar">
+              <span>head_tuning.cfg</span>
+              <span className="winbtns"><i>_</i><i>□</i><i>×</i></span>
+            </div>
+            <div className="win-body">
+              <p className="blurb">
+                Head mode drives your real PC cursor. Pick “Head → PC cursor” above, press Start, then look at the
+                middle of the screen while it calibrates.
+              </p>
+              <label className="slider" htmlFor="head-x">
+                <span>Horizontal sensitivity <b>{settings.headSensX}</b></span>
+                <input id="head-x" type="range" min={1} max={10} step={1} value={settings.headSensX} onChange={(e) => updateSetting('headSensX', Number(e.target.value))} />
+              </label>
+              <label className="slider" htmlFor="head-y">
+                <span>Vertical sensitivity <b>{settings.headSensY}</b></span>
+                <input id="head-y" type="range" min={1} max={10} step={1} value={settings.headSensY} onChange={(e) => updateSetting('headSensY', Number(e.target.value))} />
+              </label>
+              <label className="slider" htmlFor="head-smooth">
+                <span>Head smoothing <b>{settings.headSmoothing}</b></span>
+                <input id="head-smooth" type="range" min={1} max={10} step={1} value={settings.headSmoothing} onChange={(e) => updateSetting('headSmoothing', Number(e.target.value))} />
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={settings.tiltScroll} onChange={(e) => updateSetting('tiltScroll', e.target.checked)} />
+                Tilt head to scroll
+              </label>
+            </div>
+          </article>
 
-            <label className="check">
-              <input type="checkbox" checked={settings.fistClick} onChange={(e) => updateSetting('fistClick', e.target.checked)} />
-              Fist click
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={settings.scrollGestures} onChange={(e) => updateSetting('scrollGestures', e.target.checked)} />
-              Palm / two-finger scrolling
-            </label>
+          <article className="win green">
+            <div className="titlebar">
+              <span>settings.cfg</span>
+              <span className="winbtns"><i>_</i><i>□</i><i>×</i></span>
+            </div>
+            <div className="win-body">
+              <label className="check">
+                <input type="checkbox" checked={settings.dwellEnabled} onChange={(e) => updateSetting('dwellEnabled', e.target.checked)} />
+                Dwell click (hold still to click)
+              </label>
+              <label className="slider" htmlFor="dwell-ms">
+                <span>Dwell time <b>{(settings.dwellMs / 1000).toFixed(1)}s</b></span>
+                <input id="dwell-ms" type="range" min={400} max={2000} step={100} value={settings.dwellMs} onChange={(e) => updateSetting('dwellMs', Number(e.target.value))} />
+              </label>
+              <label className="slider" htmlFor="dwell-tol">
+                <span>Dwell steadiness <b>{settings.dwellTolerance <= 0.03 ? 'strict' : settings.dwellTolerance >= 0.055 ? 'forgiving' : 'normal'}</b></span>
+                <input id="dwell-tol" type="range" min={0.02} max={0.08} step={0.005} value={settings.dwellTolerance} onChange={(e) => updateSetting('dwellTolerance', Number(e.target.value))} />
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={settings.clickSound} onChange={(e) => updateSetting('clickSound', e.target.checked)} />
+                Click sound (tick when a click fires)
+              </label>
 
-            <label className="slider" htmlFor="smoothing">
-              <span>Cursor smoothing <b>{settings.smoothing}</b></span>
-              <input id="smoothing" type="range" min={1} max={10} step={1} value={settings.smoothing} onChange={(e) => updateSetting('smoothing', Number(e.target.value))} />
-            </label>
-            <label className="slider" htmlFor="sign-threshold">
-              <span>Sign strictness <b>{settings.signThreshold <= 0.17 ? 'strict' : settings.signThreshold >= 0.28 ? 'loose' : 'normal'}</b></span>
-              <input id="sign-threshold" type="range" min={0.12} max={0.36} step={0.02} value={settings.signThreshold} onChange={(e) => updateSetting('signThreshold', Number(e.target.value))} />
-            </label>
-            <label className="slider" htmlFor="sign-hold">
-              <span>Sign hold time <b>{(settings.signHoldMs / 1000).toFixed(2)}s</b></span>
-              <input id="sign-hold" type="range" min={200} max={1200} step={50} value={settings.signHoldMs} onChange={(e) => updateSetting('signHoldMs', Number(e.target.value))} />
-            </label>
+              <label className="check">
+                <input type="checkbox" checked={settings.fistClick} onChange={(e) => updateSetting('fistClick', e.target.checked)} />
+                Fist click (hand mode)
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={settings.scrollGestures} onChange={(e) => updateSetting('scrollGestures', e.target.checked)} />
+                Palm / two-finger scrolling (hand mode)
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={settings.signsEnabled} onChange={(e) => updateSetting('signsEnabled', e.target.checked)} />
+                Custom signs on
+              </label>
 
-            <button className="secondary" onClick={() => { setSettings(DEFAULT_SETTINGS); }}>Reset to defaults</button>
-          </div>
-        </article>
+              <label className="slider" htmlFor="smoothing">
+                <span>Hand cursor smoothing <b>{settings.smoothing}</b></span>
+                <input id="smoothing" type="range" min={1} max={10} step={1} value={settings.smoothing} onChange={(e) => updateSetting('smoothing', Number(e.target.value))} />
+              </label>
+              <label className="slider" htmlFor="sign-threshold">
+                <span>Sign strictness <b>{settings.signThreshold <= 0.17 ? 'strict' : settings.signThreshold >= 0.28 ? 'loose' : 'normal'}</b></span>
+                <input id="sign-threshold" type="range" min={0.12} max={0.36} step={0.02} value={settings.signThreshold} onChange={(e) => updateSetting('signThreshold', Number(e.target.value))} />
+              </label>
+              <label className="slider" htmlFor="sign-hold">
+                <span>Sign hold time <b>{(settings.signHoldMs / 1000).toFixed(2)}s</b></span>
+                <input id="sign-hold" type="range" min={200} max={1200} step={50} value={settings.signHoldMs} onChange={(e) => updateSetting('signHoldMs', Number(e.target.value))} />
+              </label>
+
+              <button className="secondary" onClick={() => { setSettings(DEFAULT_SETTINGS); }}>Reset to defaults</button>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section className="win orange safety">
@@ -1057,7 +1501,9 @@ function App() {
         <div className="win-body">
           <p>
             Camera frames and speech are processed locally in your browser. Your signs and settings are stored only in
-            this browser. Actions run in an isolated, visible Chrome window with non-destructive validation.
+            this browser. Browser actions run in an isolated, visible Chrome window with non-destructive validation.
+            Head mode controls your real cursor only while it is on and this page keeps confirming it, and it
+            switches itself off within seconds if the page closes.
           </p>
         </div>
       </section>
