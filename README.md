@@ -1,52 +1,85 @@
-# FreeHand Browser
+# FreeHand Browser 🖐️
 
-Local-first prototype for voice- and gesture-guided browsing.
+### Voice and Webcam-Based Hands-Free Browsing
 
-## Local Installation Steps
+FreeHand Browser is an accessibility-focused project designed to make web browsing easier using voice commands and hand gestures. It aims to help people with motor impairments, temporary injuries, and users who prefer hands-free interaction.
 
-1. Install Node.js 22 or newer.
-2. Run `npm install`.
-3. Copy `.env.example` to `.env` and add `GEMINI_API_KEY` for Gemini-powered command parsing. This is optional for direct commands such as `open YouTube`.
-4. Run `npm run dev`.
-5. Open `http://localhost:5173`.
+## ✨ Features
 
-The client uses MediaPipe in the browser for hand landmarks. The server currently validates browser actions but does not automate a browser yet. See [PLAN.md](./PLAN.md) for the staged implementation plan.
+- **Voice Commands:** Navigate and interact with the browser using voice.
+- **Hand Gesture Recognition:** Use webcam-based hand tracking powered by MediaPipe.
+- **Web Navigation:** Perform supported actions such as searching, scrolling, going back, and going forward.
+- **Accessibility-Focused Design:** Explore hands-free interaction to make browsing more inclusive.
+- **Local-First Prototype:** Run the application locally during development.
 
-## Current commands
+## 🛠️ Technologies Used
 
-- `search <query>`
-- `scroll down` / `scroll up`
-- `back` / `forward`
-- `open result <number>`
-- `pause`
-- `open YouTube` (opens in the default browser)
-- `open ChatGPT`, `open github.com`, or `open reddit dot com`
-- `scroll down`, `scroll the page up`, or `page down`
-- `play lofi hip hop radio on YouTube` (opens the matching YouTube results)
-- `open a new tab`
-- `close tab` or `press Control W`
-- `type hello world`
-- `press Control L`, `press Enter`, `press Tab`, or `press ArrowDown`
+- React / Vite
+- JavaScript
+- Node.js
+- MediaPipe
+- Web Speech API
+- Gemini API (optional, for natural-language command parsing)
 
-## Hand controls
+## 🚀 Getting Started
 
-- Move your hand inside the dashed box on the camera preview to move the cursor. Point with one finger to move without triggering scroll.
-- **Dwell click:** hold the cursor still; a ring fills and it clicks (default 0.9s, adjustable in `settings.cfg`).
-- **Fist click:** hold a closed fist for 0.3s. The cursor locks where it was just before the fist formed.
-- Open palm scrolls down, two fingers scroll up (can be switched off in settings).
+### Prerequisites
 
-## Custom signs
+- Node.js 22 or newer
+- npm
+- A modern web browser
+- Webcam and microphone permissions for supported features
 
-In the `my_signs.exe` panel: name a sign, choose an action (click, scroll, back/forward, tabs, a key shortcut such as
-`Control+L`, typed text, or any voice command such as `open youtube`), press **Record**, and hold the pose through the
-3-2-1 countdown. Hold the pose for about half a second later to trigger it. Signs and settings are saved in this
-browser (localStorage). Tips: use clearly different hand shapes, keep the same hand you recorded with, and record in
-the lighting you will use. Custom signs take priority over the built-in gestures.
+### Installation
 
-## Cursor, safety guards
+1. Clone this repository:
 
-- The hand cursor is drawn inside the controlled Chrome page at the exact spot a click lands. To also move the real Windows cursor, add `FREEHAND_OS_CURSOR=1` to `.env`.
-- Tab actions are rate-limited on the server (one per 2s, max 10 tabs), so a misfiring sign cannot spam or mass-close tabs.
-- A custom sign must be clearly released (or the hand removed) before it can fire again. In `my_signs.exe`, the "Closest" line shows how near your hand is to each sign, so you can tune "Sign strictness".
+   ```bash
+   git clone YOUR_REPOSITORY_URL
+   ```
 
-Credits: Cache Me If You Can
+2. Open the project folder:
+
+   ```bash
+   cd YOUR_PROJECT_FOLDER
+   ```
+
+3. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+4. If required, copy `.env.example` to `.env` and configure your `GEMINI_API_KEY`.
+
+5. Start the development server:
+
+   ```bash
+   npm run dev
+   ```
+
+6. Open the local URL displayed in your terminal, usually `http://localhost:5173`.
+
+## 🎯 Project Goal
+
+To explore accessible, hands-free web interaction using commonly available hardware, reducing dependence on traditional mouse and keyboard controls.
+
+## 🔮 Future Scope
+
+- Improved gesture recognition and customizable gestures.
+- Predictive targeting and visual feedback.
+- Sign-language integration to support more inclusive interaction.
+- Expanded browser automation and desktop control.
+- Better compatibility with assistive technologies.
+
+## ⚠️ Current Status
+
+This project is a prototype under development. Features and supported commands may vary. Check the implementation before relying on any feature for accessibility-critical tasks.
+
+## 👥 Contributors
+
+Developed as a collaborative project for a college hackathon.
+
+---
+
+**FreeHand Browser — Browse beyond your hands.**
