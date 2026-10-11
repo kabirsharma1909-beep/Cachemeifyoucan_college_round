@@ -12,7 +12,7 @@ Control your computer with your **hand**, your **head** and your **voice**. Loca
 - **Custom signs**: record your own hand signs and map them to actions.
 - **Voice commands**: say or type what you want; common commands work out of the box.
 
-## How it works
+## How it works?
 
 Point, hold still, done. Move with your hand or head, keep the cursor still while a ring fills and FreeHand clicks, or use a voice command or custom sign for things a click can't do.
 
