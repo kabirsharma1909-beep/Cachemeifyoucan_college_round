@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeHand: control your computer with your hand, head and voice</title>
+<meta name="description" content="FreeHand lets you control your computer with your hand, your head and your voice. Everything runs on your machine.">
+<meta name="theme-color" content="#a99cf3">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 8'%3E%3Cpath fill='%23ee7a78' stroke='%233a2622' stroke-width='.5' d='M1 0h1v1h-1zM2 0h1v1h-1zM6 0h1v1h-1zM7 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM2 1h1v1h-1zM3 1h1v1h-1zM5 1h1v1h-1zM6 1h1v1h-1zM7 1h1v1h-1zM8 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM5 2h1v1h-1zM6 2h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM1 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM2 5h1v1h-1zM3 5h1v1h-1zM4 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM4 7h1v1h-1z'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+@property --p { syntax: '<angle>'; inherits: true; initial-value: 0deg; }
+
+:root {
+  --font: 'Space Mono', ui-monospace, 'Courier New', monospace;
+  --ink: #3a2622;
+  --cream: #f5ecd9;
+  --cream-2: #efe2c6;
+  --paper: #fffaf0;
+  --lav: #a99cf3;
+  --grid: rgba(255, 255, 255, 0.28);
+  /* Brand hues from the app. Bars that carry cream text use the deeper "-d" tones so contrast stays AA. */
+  --teal: #2b8ea0;   --teal-d: #17687a;
+  --yellow: #f1b63f;
+  --orange: #ee7d2c;
+  --coral: #ee7a78;
+  --green: #4c9a5b;  --green-d: #2a7039;
+  --purple: #7b6be0; --purple-d: #5b4bc4;
+  --shadow: 5px 5px 0 var(--ink);
+  --shadow-sm: 3px 3px 0 var(--ink);
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+body {
+  margin: 0;
+  min-width: 320px;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.65;
+  background-color: var(--lav);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+.win :focus-visible, .win-body :focus-visible { outline-color: var(--teal-d); }
+
+.skip { position: absolute; left: 12px; top: -60px; z-index: 10; padding: 8px 12px; background: var(--cream); border: 3px solid var(--ink); font-weight: 700; color: var(--ink); }
+.skip:focus { top: 12px; }
+
+.wrap { width: min(1120px, calc(100% - 40px)); margin: 0 auto; }
+section { padding: 36px 0; }
+p { margin: 0 0 12px; max-width: 62ch; }
+code { font-family: var(--font); background: var(--paper); border: 2px solid var(--ink); padding: 0 5px; font-size: .92em; }
+
+h1, h2, h3 { margin: 0; line-height: 1.15; }
+h2 {
+  margin-bottom: 8px;
+  font-size: clamp(26px, 4.6vw, 38px);
+  letter-spacing: .05em;
+  color: var(--cream);
+  text-shadow: 3px 3px 0 var(--ink), -2px -2px 0 var(--ink), 2px -2px 0 var(--ink), -2px 2px 0 var(--ink);
+}
+.lede { font-weight: 700; margin-bottom: 26px; }
+
+/* ---------- retro window ---------- */
+.win {
+  background: var(--cream);
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow);
+  transition: transform .12s, box-shadow .12s;
+}
+.win:hover { transform: translateY(-2px); box-shadow: 7px 7px 0 var(--ink); }
+.titlebar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 10px;
+  font-size: 13px; font-weight: 700; letter-spacing: .05em;
+  color: var(--cream);
+  border-bottom: 3px solid var(--ink);
+}
+.titlebar h3 { font-size: inherit; letter-spacing: inherit; font-weight: inherit; }
+.t-teal { background: var(--teal-d); }
+.t-purple { background: var(--purple-d); }
+.t-green { background: var(--green-d); }
+.t-yellow { background: var(--yellow); color: var(--ink); }
+.t-coral { background: var(--coral); color: var(--ink); }
+.t-orange { background: var(--orange); color: var(--ink); }
+.winbtns { display: flex; gap: 4px; flex: none; }
+.winbtns i {
+  width: 16px; height: 16px; display: grid; place-items: center;
+  font-style: normal; font-size: 11px; line-height: 1;
+  background: var(--cream); color: var(--ink); border: 2px solid var(--ink);
+}
+.win-body { padding: 18px; }
+.win-body > :last-child { margin-bottom: 0; }
+
+/* ---------- buttons, chips, pills ---------- */
+.btn {
+  display: inline-block;
+  padding: 10px 16px;
+  font: 700 14px/1.3 var(--font);
+  color: var(--ink); text-decoration: none; text-align: center;
+  background: var(--yellow);
+  border: 3px solid var(--ink); border-radius: 0;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: transform .06s, box-shadow .06s, background .1s;
+}
+.btn:hover { background: #f6c764; }
+.btn:active, .btn.pressed { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink); }
+.btn.teal { background: var(--teal-d); color: var(--cream); }
+.btn.teal:hover { background: #1f7f94; }
+.btn.orange { background: var(--orange); }
+.btn.orange:hover { background: #f4913f; }
+.btn.plain { background: var(--cream-2); }
+.btn.plain:hover { background: #f8eed6; }
+.btn.mini { padding: 3px 10px; font-size: 12px; box-shadow: 2px 2px 0 var(--ink); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 14px; }
+
+.sticker {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 14px 4px 10px;
+  font-size: 12px; font-weight: 700; letter-spacing: .12em;
+  background: var(--cream); border: 2px solid var(--ink); border-radius: 999px; box-shadow: var(--shadow-sm);
+}
+.heart { width: 18px; height: 16px; display: block; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip {
+  padding: 6px 10px; font: 700 12px/1.3 var(--font); color: var(--ink);
+  background: var(--cream-2); border: 3px solid var(--ink); box-shadow: 2px 2px 0 var(--ink);
+}
+.inset {
+  padding: 10px 12px; background: var(--paper);
+  border: 3px solid var(--ink); box-shadow: inset 3px 3px 0 rgba(58, 38, 34, .18);
+}
+
+/* ---------- top bar ---------- */
+.topbar { padding: 22px 0 0; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; padding: 10px 14px; background: var(--cream); border: 3px solid var(--ink); box-shadow: var(--shadow-sm); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .14em; color: var(--ink); text-decoration: none; }
+.nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.nav a { padding: 4px 10px; font-size: 13px; font-weight: 700; color: var(--ink); text-decoration: none; background: var(--cream-2); border: 2px solid var(--ink); }
+.nav a:hover { background: var(--yellow); }
+
+/* ---------- hero ---------- */
+.hero { padding: 48px 0 28px; }
+.hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; }
+h1 {
+  margin: 18px 0 14px;
+  font-size: clamp(44px, 9vw, 84px);
+  letter-spacing: .12em;
+  color: var(--cream);
+  text-shadow: 5px 5px 0 var(--ink), -2px -2px 0 var(--ink), 2px -2px 0 var(--ink), -2px 2px 0 var(--ink);
+}
+.pitch { font-size: 17px; font-weight: 700; max-width: 34ch; margin-bottom: 24px; }
+
+/* live dwell demo */
+.demo { position: relative; }
+.demo-targets { display: grid; gap: 12px; margin: 14px 0; touch-action: none; }
+.target {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 16px; font: 700 15px/1.3 var(--font); color: var(--ink); text-align: left;
+  background: var(--yellow); border: 3px solid var(--ink); border-radius: 0; box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.target:nth-child(2) { background: #8fd0dc; }
+.target:nth-child(3) { background: var(--coral); }
+.target.pressed { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink); }
+.target .mark { opacity: 0; font-size: 18px; }
+.target.pressed .mark { opacity: 1; }
+.demo-status { min-height: 4.6em; font-size: 13px; }
+.ring {
+  position: absolute; left: 0; top: 0; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+  border-radius: 50%; pointer-events: none; opacity: 0;
+  background: conic-gradient(var(--ink) var(--p, 0deg), rgba(58, 38, 34, .28) 0);
+  -webkit-mask: radial-gradient(circle, transparent 14px, #000 15px);
+          mask: radial-gradient(circle, transparent 14px, #000 15px);
+  filter: drop-shadow(1px 0 0 var(--cream)) drop-shadow(-1px 0 0 var(--cream)) drop-shadow(0 1px 0 var(--cream)) drop-shadow(0 -1px 0 var(--cream));
+}
+.ring.on { opacity: 1; }
+.ring.locked { background: conic-gradient(var(--coral) var(--p, 0deg), rgba(58, 38, 34, .28) 0); }
+
+/* ---------- how it works ---------- */
+.steps, .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 26px; }
+.stepnum {
+  float: right; margin: 0 0 8px 12px; width: 46px; height: 46px; display: grid; place-items: center;
+  font-size: 24px; font-weight: 700; background: var(--paper); border: 3px solid var(--ink); box-shadow: var(--shadow-sm);
+}
+.mini-stage { position: relative; height: 120px; margin-bottom: 14px; background: #2a1c19; border: 3px solid var(--ink); overflow: hidden; }
+.mini-stage .box { position: absolute; left: 14%; top: 16%; width: 72%; height: 68%; border: 2px dashed var(--cream); }
+.mini-cursor { position: absolute; left: 50%; top: 48%; width: 0; height: 0; }
+.mini-cursor svg { position: absolute; left: 0; top: 0; overflow: visible; }
+.mini-cursor .ring { opacity: 1; left: 0; top: 0; background: conic-gradient(var(--coral) var(--p, 0deg), rgba(245, 236, 217, .3) 0); animation: fill 3s linear infinite; }
+.mini-cursor.drift { animation: drift 6s ease-in-out infinite; }
+@keyframes fill { 0% { --p: 0deg; } 80%, 100% { --p: 360deg; } }
+@keyframes drift { 0%, 100% { transform: translate(-30px, 8px); } 50% { transform: translate(34px, -10px); } }
+.say { display: grid; gap: 8px; margin-bottom: 14px; }
+.say .inset { font-size: 13px; }
+
+/* ---------- features ---------- */
+.feature h3 { font-size: 13px; }
+.feature .win-body p { font-size: 14px; }
+.tag { display: inline-block; margin-top: 4px; padding: 1px 8px; font-size: 12px; font-weight: 700; background: var(--cream-2); border: 2px solid var(--ink); }
+label.slider { display: block; margin: 0 0 12px; font-size: 13px; }
+label.slider span { display: flex; justify-content: space-between; margin-bottom: 4px; }
+input[type=range] { width: 100%; height: 20px; padding: 0; margin: 0; background: transparent; appearance: none; -webkit-appearance: none; cursor: pointer; }
+input[type=range]::-webkit-slider-runnable-track { height: 8px; background: var(--cream-2); border: 3px solid var(--ink); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 22px; margin-top: -9px; background: var(--yellow); border: 3px solid var(--ink); }
+input[type=range]::-moz-range-track { height: 8px; background: var(--cream-2); border: 3px solid var(--ink); }
+input[type=range]::-moz-range-thumb { width: 14px; height: 18px; border-radius: 0; background: var(--yellow); border: 3px solid var(--ink); }
+
+/* ---------- setup ---------- */
+.setup-list { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 14px; counter-reset: s; }
+.setup-list > li { counter-increment: s; position: relative; padding-left: 42px; }
+.setup-list > li::before {
+  content: counter(s); position: absolute; left: 0; top: -2px; width: 30px; height: 30px; display: grid; place-items: center;
+  font-weight: 700; background: var(--yellow); border: 3px solid var(--ink);
+}
+.cmd { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; max-width: 520px; }
+.cmd code { background: none; border: 0; padding: 0; font-size: 14px; overflow-x: auto; white-space: nowrap; }
+.copy-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---------- FAQ ---------- */
+.faq { display: grid; gap: 16px; max-width: 820px; }
+details.win:hover { transform: none; box-shadow: var(--shadow); }
+details summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; font-weight: 700; background: var(--cream-2);
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::after {
+  content: '+'; flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+  font-size: 18px; line-height: 1; background: var(--yellow); border: 3px solid var(--ink);
+}
+details[open] summary { border-bottom: 3px solid var(--ink); }
+details[open] summary::after { content: '\2212'; }
+details .win-body { padding: 14px 16px; }
+
+/* ---------- footer ---------- */
+footer { padding: 24px 0 56px; }
+.foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; padding: 10px 14px; font-size: 13px; background: var(--cream); border: 3px solid var(--ink); box-shadow: var(--shadow-sm); }
+.foot a { color: var(--ink); font-weight: 700; }
+
+@media (max-width: 860px) {
+  .hero-grid { grid-template-columns: 1fr; gap: 32px; }
+  .hero { padding-top: 32px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; }
+  .mini-cursor, .mini-cursor .ring { animation: none !important; }
+  .mini-cursor .ring { --p: 216deg; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="wrap bar">
+    <a class="brand" href="#top"><svg class="heart" viewBox="-1 -1 11 10" aria-hidden="true"><use href="#heart"/></svg> FREEHAND</a>
+    <nav class="nav" aria-label="Page sections">
+      <a href="#how">How it works</a><a href="#features">Features</a><a href="#privacy">Privacy</a><a href="#setup">Setup</a><a href="#faq">FAQ</a><a href="/app.html">Launch app</a>
+    </nav>
+  </div>
+</header>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="heart" viewBox="-1 -1 11 10">
+      <path d="M1 0h1v1h-1zM2 0h1v1h-1zM6 0h1v1h-1zM7 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM2 1h1v1h-1zM3 1h1v1h-1zM5 1h1v1h-1zM6 1h1v1h-1zM7 1h1v1h-1zM8 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM5 2h1v1h-1zM6 2h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM1 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM2 5h1v1h-1zM3 5h1v1h-1zM4 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM4 7h1v1h-1z" fill="#3a2622" transform="translate(1,0)"/><path d="M1 0h1v1h-1zM2 0h1v1h-1zM6 0h1v1h-1zM7 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM2 1h1v1h-1zM3 1h1v1h-1zM5 1h1v1h-1zM6 1h1v1h-1zM7 1h1v1h-1zM8 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM5 2h1v1h-1zM6 2h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM1 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM2 5h1v1h-1zM3 5h1v1h-1zM4 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM4 7h1v1h-1z" fill="#3a2622" transform="translate(-1,0)"/>
+      <path d="M1 0h1v1h-1zM2 0h1v1h-1zM6 0h1v1h-1zM7 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM2 1h1v1h-1zM3 1h1v1h-1zM5 1h1v1h-1zM6 1h1v1h-1zM7 1h1v1h-1zM8 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM5 2h1v1h-1zM6 2h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM1 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM2 5h1v1h-1zM3 5h1v1h-1zM4 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM4 7h1v1h-1z" fill="#3a2622" transform="translate(0,1)"/><path d="M1 0h1v1h-1zM2 0h1v1h-1zM6 0h1v1h-1zM7 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM2 1h1v1h-1zM3 1h1v1h-1zM5 1h1v1h-1zM6 1h1v1h-1zM7 1h1v1h-1zM8 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM5 2h1v1h-1zM6 2h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM1 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM2 5h1v1h-1zM3 5h1v1h-1zM4 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM4 7h1v1h-1z" fill="#3a2622" transform="translate(0,-1)"/>
+      <path d="M1 0h1v1h-1zM2 0h1v1h-1zM6 0h1v1h-1zM7 0h1v1h-1zM0 1h1v1h-1zM1 1h1v1h-1zM2 1h1v1h-1zM3 1h1v1h-1zM5 1h1v1h-1zM6 1h1v1h-1zM7 1h1v1h-1zM8 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM5 2h1v1h-1zM6 2h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM0 3h1v1h-1zM1 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM1 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM2 5h1v1h-1zM3 5h1v1h-1zM4 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM4 7h1v1h-1z" fill="#ee7a78"/>
+    </symbol>
+    <symbol id="arrow" viewBox="0 0 16 22"><path d="M1 1 L1 17 L5 13 L8 20 L11 18.5 L8 12 L14 12 Z" fill="#f5ecd9" stroke="#3a2622" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<main id="main">
+  <div id="top" class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <div class="sticker"><svg class="heart" viewBox="-1 -1 11 10" aria-hidden="true"><use href="#heart"/></svg> LOCAL-FIRST</div>
+        <h1>FREEHAND</h1>
+        <p class="pitch">Control your computer with your hand, your head and your voice. Everything runs on your machine.</p>
+        <div class="btn-row">
+          <a class="btn teal" href="/app.html">Launch app</a>
+          <a class="btn plain" href="#setup">Set it up</a>
+        </div>
+      </div>
+
+      <div class="win demo" data-demo>
+        <div class="titlebar t-teal"><h3>dwell_demo.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+        <div class="win-body">
+          <p id="demo-hint"><b>Try dwell click.</b> Rest your pointer on a button and keep it still for one second. No clicking needed.</p>
+          <div class="demo-targets">
+            <button class="target" type="button" data-say="Clicked “Open YouTube”. In FreeHand this opens YouTube in the controlled Chrome window."><span>▶ Open YouTube</span><span class="mark" aria-hidden="true">✓</span></button>
+            <button class="target" type="button" data-say="Clicked “Scroll down”. In FreeHand this scrolls the page."><span>↓ Scroll down</span><span class="mark" aria-hidden="true">✓</span></button>
+            <button class="target" type="button" data-say="Clicked “New tab”. In FreeHand this opens a new tab."><span>+ New tab</span><span class="mark" aria-hidden="true">✓</span></button>
+          </div>
+          <div class="inset demo-status" id="demo-status" aria-live="polite">Waiting for a hold…</div>
+        </div>
+        <div class="ring" aria-hidden="true"></div>
+      </div>
+    </div>
+  </div>
+
+  <section id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <h2 id="how-h">How it works</h2>
+      <p class="lede">Point, hold still, done. Three steps, no mouse.</p>
+      <div class="steps">
+        <article class="win">
+          <div class="titlebar t-teal"><h3>move.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <div class="mini-stage" aria-hidden="true"><div class="box"></div><div class="mini-cursor drift"><svg width="22" height="30" viewBox="0 0 16 22"><use href="#arrow"/></svg></div></div>
+            <div class="stepnum" aria-hidden="true">1</div>
+            <p>Point with your hand, or turn your head. The cursor follows, smoothed so it doesn't shake.</p>
+          </div>
+        </article>
+        <article class="win">
+          <div class="titlebar t-yellow"><h3>hold_still.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <div class="mini-stage" aria-hidden="true"><div class="mini-cursor"><svg width="22" height="30" viewBox="0 0 16 22"><use href="#arrow"/></svg><div class="ring"></div></div></div>
+            <div class="stepnum" aria-hidden="true">2</div>
+            <p>Keep the cursor still and a ring fills. When it's full, FreeHand clicks exactly where the cursor sits.</p>
+          </div>
+        </article>
+        <article class="win">
+          <div class="titlebar t-coral"><h3>do_more.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <div class="say" aria-hidden="true"><div class="inset">“open YouTube”</div><div class="inset">Your own hand sign → new tab</div></div>
+            <div class="stepnum" aria-hidden="true">3</div>
+            <p>Say a command, or hold a hand sign you recorded yourself, to do things a click can't.</p>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" aria-labelledby="features-h">
+    <div class="wrap">
+      <h2 id="features-h">What's inside</h2>
+      <p class="lede">Pick the input that suits your day. They share the same settings.</p>
+      <div class="features">
+        <article class="win feature">
+          <div class="titlebar t-teal"><h3>hand_control.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <p>Move a cursor with your hand through your webcam. The cursor is smoothed, and a fist click locks the target before your fingers move.</p>
+            <p>Open palm and two-finger scrolling are available, and off by default.</p>
+          </div>
+        </article>
+        <article class="win feature">
+          <div class="titlebar t-purple"><h3>head_control.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <p>Turn and tip your head to move your real Windows cursor across the screen. Tilt your head to scroll. Recenter whenever you drift.</p>
+            <span class="tag">Windows, primary monitor</span>
+          </div>
+        </article>
+        <article class="win feature">
+          <div class="titlebar t-coral"><h3>dwell_click.cfg</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <p>Hold still to click. Partway through, the cursor locks in place, so small tremor can't move it and the click lands where you see it.</p>
+            <p>Set the hold time and how much wobble counts as still. A tick tells you when it fires.</p>
+          </div>
+        </article>
+        <article class="win feature">
+          <div class="titlebar t-yellow"><h3>my_signs.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <p>Record your own hand sign and choose what it does: click, scroll, back or forward, open or close a tab, press a shortcut, type text, or run a voice-style command.</p>
+            <p>A sign must be released before it can fire again, so it can't repeat by accident.</p>
+          </div>
+        </article>
+        <article class="win feature">
+          <div class="titlebar t-orange"><h3>voice_commands.exe</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <p>Say or type what you want. Common commands work out of the box.</p>
+            <div class="chips" aria-label="Example commands"><span class="chip">▶ open YouTube</span><span class="chip">⌕ open Google</span><span class="chip">+ new tab</span><span class="chip">↓ scroll down</span><span class="chip">↑ scroll up</span><span class="chip">↵ press enter</span></div>
+          </div>
+        </article>
+        <article class="win feature">
+          <div class="titlebar t-green"><h3>settings.cfg</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+          <div class="win-body">
+            <p>Tune it to your hands and your desk.</p>
+            <label class="slider"><span>Cursor smoothing <b data-out="smooth">7</b></span><input type="range" min="1" max="10" value="7" data-for="smooth" aria-label="Cursor smoothing"></label>
+            <label class="slider"><span>Dwell time <b data-out="dwell">0.9s</b></span><input type="range" min="4" max="20" value="9" data-for="dwell" aria-label="Dwell time"></label>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="privacy" aria-labelledby="privacy-h">
+    <div class="wrap">
+      <h2 id="privacy-h">Privacy</h2>
+      <article class="win" style="max-width:820px">
+        <div class="titlebar t-orange"><h3>privacy.txt</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+        <div class="win-body">
+          <p>Your camera frames are processed in your browser and never uploaded.</p>
+          <p>Your signs and settings are saved only in this browser.</p>
+          <p>Head control works only while it's switched on. If the page closes, it switches itself off within a few seconds.</p>
+          <p>Two things to know: the tracking models download once from public servers, and voice input uses your browser's built-in speech recognition, which in Chrome may send audio to its provider. If you add an optional Gemini key, typed or spoken commands that the built-in rules can't parse are sent to Gemini.</p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section id="setup" aria-labelledby="setup-h">
+    <div class="wrap">
+      <h2 id="setup-h">Set it up</h2>
+      <p class="lede">About five minutes. You need a webcam.</p>
+      <article class="win" style="max-width:820px">
+        <div class="titlebar t-yellow"><h3>setup.txt</h3><span class="winbtns" aria-hidden="true"><i>_</i><i>□</i><i>×</i></span></div>
+        <div class="win-body">
+          <ol class="setup-list">
+            <li>Install <b>Node.js</b> and <b>Google Chrome</b>. Chrome is needed for the browser window FreeHand controls.</li>
+            <li>Unzip the FreeHand project, then open a terminal inside it.
+              <div class="inset cmd"><code>cd FreeHand</code><button class="btn mini plain" type="button" data-copy="cd FreeHand">Copy</button></div></li>
+            <li>Install the dependencies.
+              <div class="inset cmd"><code>npm install</code><button class="btn mini plain" type="button" data-copy="npm install">Copy</button></div></li>
+            <li>Start FreeHand.
+              <div class="inset cmd"><code>npm run dev</code><button class="btn mini plain" type="button" data-copy="npm run dev">Copy</button></div></li>
+            <li>Open the app, then allow camera access. You can also press <b>Launch app</b> on this page.
+              <div class="inset cmd"><code>http://localhost:5173/app.html</code><button class="btn mini plain" type="button" data-copy="http://localhost:5173/app.html">Copy</button></div></li>
+          </ol>
+          <p>Optional: add <code>GEMINI_API_KEY</code> to a <code>.env</code> file to let voice commands handle open-ended requests.</p>
+          <p>Head control of the real cursor currently supports Windows only.</p>
+          <div class="btn-row" style="margin-top:16px">
+            <!-- TODO: replace # with the real download URL -->
+            <a class="btn teal" href="#">Download FreeHand</a>
+            <!-- TODO: replace # with the GitHub repository URL -->
+            <a class="btn plain" href="#">View the source</a>
+          </div>
+          <span class="copy-status" id="copy-status" role="status" aria-live="polite"></span>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section id="faq" aria-labelledby="faq-h">
+    <div class="wrap">
+      <h2 id="faq-h">Questions</h2>
+      <div class="faq">
+        <details class="win"><summary>Does my video leave my computer?</summary><div class="win-body"><p>No. Camera frames are processed in your browser and are not uploaded. The tracking models download once when you first start the camera.</p></div></details>
+        <details class="win"><summary>Does it work on Mac or Linux?</summary><div class="win-body"><!-- TODO: update once tested on other systems --><p>FreeHand is built and tested on Windows. Head control of the real cursor is Windows only. The controlled Chrome window uses Playwright, so other systems may work for that part, but it isn't tested.</p></div></details>
+        <details class="win"><summary>What if the cursor feels jittery?</summary><div class="win-body"><p>Raise cursor smoothing in settings. For clicking, raise dwell steadiness so a little wobble still counts as holding still. In head mode, lower the sensitivity so small movements travel less.</p></div></details>
+        <details class="win"><summary>Can I make my own gestures?</summary><div class="win-body"><p>Yes. In my_signs, name a sign, pick an action, press Record and hold the pose through the countdown. Choose clearly different hand shapes, and use the same hand you recorded with.</p></div></details>
+        <details class="win"><summary>How do I stop head control?</summary><div class="win-body"><p>Press the Stop button, or press Esc while the FreeHand page is focused. If the page closes, control switches off within a few seconds.</p></div></details>
+        <details class="win"><summary>Do I need a Gemini key?</summary><div class="win-body"><p>No. Built-in commands like “open YouTube” or “new tab” work without one. A key only helps with open-ended requests.</p></div></details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span style="display:inline-flex;align-items:center;gap:8px"><svg class="heart" viewBox="-1 -1 11 10" aria-hidden="true"><use href="#heart"/></svg> FreeHand, local-first hands-free control</span>
+    <!-- TODO: add repository and contact links -->
+    <a href="#top">Back to top</a>
+  </div>
+</footer>
+
+<script>
+(() => {
+  // ---------- live dwell demo: rest the pointer on a button and it clicks ----------
+  const demo = document.querySelector('[data-demo]');
+  const ring = demo.querySelector('.ring');
+  const statusEl = document.getElementById('demo-status');
+  const hint = document.getElementById('demo-hint');
+  const DWELL_MS = 1000, LOCK_AT = 0.35, TOL = 20;
+  let target = null, anchor = null, lockAt = null, startT = 0, pt = { x: 0, y: 0 }, raf = 0, fired = false;
+
+  if (window.matchMedia('(pointer: coarse)').matches) {
+    hint.innerHTML = '<b>Try dwell click.</b> Press and hold a button without moving your finger for one second.';
+  }
+
+  const rel = (p) => { const r = demo.getBoundingClientRect(); return { x: p.x - r.left, y: p.y - r.top }; };
+  const targetAt = (x, y) => { const el = document.elementFromPoint(x, y); return el && el.closest ? el.closest('.target') : null; };
+
+  function stop() {
+    cancelAnimationFrame(raf); raf = 0;
+    target = anchor = lockAt = null; fired = false;
+    ring.classList.remove('on', 'locked');
+    ring.style.setProperty('--p', '0deg');
+  }
+
+  function begin(t) {
+    stop();
+    target = t; anchor = { ...pt }; startT = performance.now();
+    ring.classList.add('on');
+    raf = requestAnimationFrame(tick);
+  }
+
+  function tick(now) {
+    if (!target) return;
+    const progress = Math.min(1, (now - startT) / DWELL_MS);
+    // Like the real app: after a third of the dwell, the ring (and click point) freezes in place.
+    if (!lockAt && progress >= LOCK_AT) { lockAt = { ...pt }; ring.classList.add('locked'); }
+    const at = rel(lockAt || pt);
+    ring.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    ring.style.setProperty('--p', `${progress * 360}deg`);
+    if (progress >= 1 && !fired) { fired = true; press(target); ring.classList.remove('on'); }
+    raf = requestAnimationFrame(tick);
+  }
+
+  function press(btn) {
+    btn.classList.add('pressed');
+    statusEl.textContent = btn.dataset.say;
+    setTimeout(() => btn.classList.remove('pressed'), 700);
+  }
+
+  function onMove(e) {
+    pt = { x: e.clientX, y: e.clientY };
+    const t = targetAt(pt.x, pt.y);
+    if (!t) { stop(); return; }
+    // Moving too far, or onto a different button, restarts the hold (and re-arms after a click).
+    if (!target || t !== target || Math.hypot(pt.x - anchor.x, pt.y - anchor.y) > TOL) begin(t);
+  }
+
+  demo.addEventListener('pointermove', onMove);
+  demo.addEventListener('pointerdown', onMove);
+  demo.addEventListener('pointerleave', stop);
+  demo.addEventListener('pointerup', (e) => { if (e.pointerType === 'touch') stop(); });
+  demo.addEventListener('pointercancel', stop);
+  // Regular clicks and keyboard still work on the demo buttons.
+  demo.querySelectorAll('.target').forEach((b) => b.addEventListener('click', () => press(b)));
+
+  // ---------- settings sliders (decorative) ----------
+  document.querySelectorAll('input[data-for]').forEach((input) => {
+    const out = document.querySelector(`[data-out="${input.dataset.for}"]`);
+    const render = () => { out.textContent = input.dataset.for === 'dwell' ? (input.value / 10).toFixed(1) + 's' : input.value; };
+    input.addEventListener('input', render); render();
+  });
+
+  // ---------- copy buttons ----------
+  const live = document.getElementById('copy-status');
+  document.querySelectorAll('[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const text = btn.dataset.copy;
+      try { await navigator.clipboard.writeText(text); }
+      catch {
+        const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch {} ta.remove();
+      }
+      const old = btn.textContent; btn.textContent = 'Copied'; live.textContent = `Copied ${text}`;
+      setTimeout(() => { btn.textContent = old; }, 1400);
+    });
+  });
+})();
+</script>
+</body>
+</html>

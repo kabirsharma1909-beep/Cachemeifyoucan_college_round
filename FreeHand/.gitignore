@@ -1,0 +1,6 @@
+node_modules
+dist
+.freehand-chrome
+.env
+.env.local
+*.log
