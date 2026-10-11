@@ -98,6 +98,7 @@ h1 {
 .win.orange .titlebar { background: var(--orange); }
 .win.coral .titlebar { background: var(--coral); color: var(--ink); }
 .win.green .titlebar { background: var(--green); }
+.win.purple .titlebar { background: #7b6be0; }
 .winbtns { display: flex; gap: 4px; }
 .winbtns i {
   width: 16px; height: 16px;
@@ -295,3 +296,23 @@ input[type='range']::-moz-range-thumb { width: 14px; height: 18px; border-radius
 @media (max-width: 860px) {
   .grid { grid-template-columns: 1fr; }
 }
+
+/* ---- Mode switch, head mode, stacked windows ---- */
+.stack { display: grid; gap: 28px; align-items: start; }
+.seg { display: grid; grid-template-columns: 1fr 1.6fr; margin-bottom: 12px; box-shadow: 3px 3px 0 var(--ink); }
+.seg button { box-shadow: none; background: var(--cream-2); border-right-width: 0; padding: 8px 10px; font-size: 12px; }
+.seg button:last-child { border-right-width: 3px; }
+.seg button.on { background: var(--teal); color: var(--cream); }
+.seg button:active { transform: none; }
+.btn-row { display: flex; gap: 10px; }
+.btn-row button { flex: 1; background: var(--teal); color: var(--cream); }
+.btn-row button:hover { background: #3aa2b5; }
+.btn-row button.secondary { flex: 0 0 auto; background: var(--cream-2); color: var(--ink); }
+.win.teal > .win-body > .btn-row { margin-top: 4px; }
+.dwell-state { margin: 10px 0 0; padding: 6px 10px; font-size: 12px; background: #fffaf0; border: 3px solid var(--ink); min-height: 34px; }
+.warn { margin: 12px 0 0; padding: 8px 10px; font-size: 11px; line-height: 1.5; font-weight: 700; background: #f5b3b1; border: 3px solid var(--ink); }
+.video-wrap.head .region-box { display: none; }
+.status.calibrating { background: #f8dd9a; }
+.status.tracking { background: #bfe3c4; }
+.status.no-face { background: #f5b3b1; }
+.rec-overlay small { padding: 0 12px; line-height: 1.4; }
